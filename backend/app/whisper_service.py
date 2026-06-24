@@ -2,6 +2,8 @@
 
 import logging
 from pathlib import Path
+import subprocess
+import tempfile
 
 from faster_whisper import WhisperModel
 
@@ -53,17 +55,71 @@ def transcribe_audio(audio_path: Path) -> str:
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+    # Convert any uploaded audio (webm/wav/mp3/etc.) into a clean
+    # 16 kHz mono WAV file before sending it to Whisper.
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav:
+            wav_path = temp_wav.name
+
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(audio_path),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                wav_path,
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    except Exception as exc:
+        logger.exception("FFmpeg audio conversion failed")
+        raise RuntimeError(
+            f"Failed to convert audio for transcription: {exc}"
+        ) from exc
+
     model = _get_whisper_model()
 
     try:
-        segments, _info = model.transcribe(str(audio_path), beam_size=5)
-        transcript_parts = [segment.text.strip() for segment in segments]
-        transcript = " ".join(part for part in transcript_parts if part)
+        segments, info = model.transcribe(
+            wav_path,
+            beam_size=5,
+        )
+
+        segments = list(segments)
+
+        print("\n================ WHISPER DEBUG ================")
+        print("LANGUAGE:", info.language)
+        print("PROBABILITY:", info.language_probability)
+        print("NUMBER OF SEGMENTS:", len(segments))
+
+        for seg in segments:
+            print("SEGMENT:", repr(seg.text))
+
+        transcript_parts = [
+            seg.text.strip()
+            for seg in segments
+            if seg.text.strip()
+        ]
+
+        transcript = " ".join(transcript_parts)
+
+        print("FINAL TRANSCRIPT:", repr(transcript))
+        print("=============================================\n")
+
     except Exception as exc:
         logger.exception("Whisper transcription failed for %s", audio_path)
-        raise RuntimeError(f"Speech-to-text transcription failed: {exc}") from exc
+        raise RuntimeError(
+            f"Speech-to-text transcription failed: {exc}"
+        ) from exc
 
-    if not transcript:
+    if not transcript.strip():
         raise RuntimeError("No speech detected in the audio file.")
 
     logger.info("Transcription complete (%d characters)", len(transcript))

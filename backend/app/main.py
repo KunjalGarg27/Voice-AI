@@ -4,13 +4,15 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
-
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.config import UPLOADS_DIR
 from app.ollama_service import generate_response
+from app.tts_service import generate_speech
 from app.whisper_service import transcribe_audio
+from fastapi.staticfiles import StaticFiles
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,8 +22,24 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Voice AI Assistant",
-    description="Local voice assistant: audio → Whisper → Qwen → JSON response",
+    description="Local voice assistant: audio → Whisper → Qwen → Piper TTS → JSON response",
     version="0.1.0",
+)
+TEMP_DIR = Path(__file__).resolve().parent.parent / "temp"
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+app.mount("/audio", StaticFiles(directory=TEMP_DIR), name="audio")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Ensure the uploads directory exists at startup
@@ -83,10 +101,10 @@ async def voice_query(audio: UploadFile = File(...)) -> JSONResponse:
     """
     Accept an audio file, transcribe it with Whisper, and reply via Qwen.
 
-    Pipeline: upload → save to uploads/ → Whisper STT → Ollama Qwen → JSON.
+    Pipeline: upload → save to uploads/ → Whisper STT → Ollama Qwen → Piper TTS → JSON.
 
     Returns:
-        JSON with ``transcript`` (speech-to-text) and ``response`` (LLM reply).
+        JSON with ``transcript``, ``response`` (LLM reply), and ``audio_file`` (WAV path).
     """
     _validate_upload(audio)
     upload_path = _build_upload_path(audio.filename)
@@ -98,6 +116,8 @@ async def voice_query(audio: UploadFile = File(...)) -> JSONResponse:
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
+        import traceback
+        print(traceback.format_exc())
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
@@ -107,9 +127,24 @@ async def voice_query(audio: UploadFile = File(...)) -> JSONResponse:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    # Run Piper TTS off the async event loop; WAV is saved under backend/temp/
+    try:
+        audio_file = await asyncio.to_thread(generate_speech, response_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    audio_filename = Path(audio_file).name
+
+    audio_url = f"http://localhost:8000/audio/{audio_filename}"
+
     return JSONResponse(
         content={
             "transcript": transcript,
             "response": response_text,
+            "audio_url": audio_url,
         }
     )
