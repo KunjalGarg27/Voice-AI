@@ -83,14 +83,73 @@ def transcribe_audio(audio_path: Path) -> str:
         raise RuntimeError(
             f"Failed to convert audio for transcription: {exc}"
         ) from exc
-
+    audio_for_whisper = wav_path    
     model = _get_whisper_model()
 
     try:
         segments, info = model.transcribe(
-            wav_path,
-            beam_size=5,
-        )
+        audio_for_whisper,
+        beam_size=5,
+        initial_prompt="""
+        Clean energy marketplace vocabulary:
+
+        solar panel
+        solar panels
+        rooftop solar
+        photovoltaic
+        solar inverter
+        lithium battery
+        lithium ion battery
+        battery storage
+        energy storage system
+        EV charger
+        electric vehicle charger
+        charging station
+        renewable energy
+        clean energy
+        green energy
+        sustainability
+        carbon footprint
+        energy efficient
+        energy conservation
+        smart meter
+        smart grid
+        microgrid
+        wind turbine
+        hydrogen fuel cell
+        biogas
+        biomass
+        geothermal energy
+        net zero
+        electric vehicle
+        EV battery
+        solar water heater
+        LED lighting
+        energy management system
+        watt
+        wattage
+        watt hour
+        watt hour meter
+        watt hour meter reading
+        watt hour meter reading
+        units
+        Luminous
+        Exide
+        Amaron
+        Livguard
+        Tata Power Solar
+        Waaree
+        Adani Solar
+        Vikram Solar
+        Microtek
+        Schneider Electric
+        Havells
+        Anchor
+
+
+        User may speak English, Hindi, Punjabi, or Hinglish.
+        """
+)
 
         segments = list(segments)
 
@@ -112,6 +171,19 @@ def transcribe_audio(audio_path: Path) -> str:
 
         print("FINAL TRANSCRIPT:", repr(transcript))
         print("=============================================\n")
+        COMMON_FIXES = {
+            "solar penal": "solar panel",
+            "solar pannel": "solar panel",
+            "lithium bettery": "lithium battery",
+            "ev charge": "EV charger",
+            "charging point": "charging station",
+        }
+        transcript_lower = transcript.lower()
+
+        for wrong, right in COMMON_FIXES.items():
+            transcript_lower = transcript_lower.replace(wrong, right)
+
+        transcript = transcript_lower
 
     except Exception as exc:
         logger.exception("Whisper transcription failed for %s", audio_path)

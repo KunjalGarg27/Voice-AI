@@ -11,9 +11,9 @@ UPLOADS_DIR = BACKEND_ROOT / "uploads"
 # Ollama local server settings
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_MODEL = "qwen2.5:7b"
-OLLAMA_TIMEOUT_SECONDS = 120.0
+OLLAMA_TIMEOUT_SECONDS = 300.0
 
 # Whisper model settings (faster-whisper)
-WHISPER_MODEL_SIZE = "base"
+WHISPER_MODEL_SIZE = "small"
 WHISPER_DEVICE = "cpu"
 WHISPER_COMPUTE_TYPE = "int8"
